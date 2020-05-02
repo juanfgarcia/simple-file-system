@@ -1,0 +1,1 @@
+-Preguntar: se puede hacer mkFS con tamaños inferiores al del requisito?

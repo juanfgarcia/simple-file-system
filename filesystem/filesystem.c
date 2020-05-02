@@ -13,7 +13,7 @@
 #include "filesystem/filesystem.h" // Headers for the core functionality
 #include "filesystem/auxiliary.h"  // Headers for auxiliary functions
 #include "filesystem/metadata.h"   // Type and structure declaration of the file system
-
+#include <string.h>
 /*
  * @brief 	Generates the proper file system structure in a storage device, as designed by the student.
  * @return 	0 if success, -1 otherwise.
@@ -21,7 +21,7 @@
 int mkFS(long deviceSize) {
 
 	// Check if the device size is between the limits
-	if (deviceSize < MIN_DISK_SIZE || deviceSize > MAX_DISK_SIZE){
+	if (deviceSize < MIN_DISK_SIZE || deviceSize > MAX_DISK_SIZE){ 
 		return -1;
 	}
 
@@ -31,46 +31,37 @@ int mkFS(long deviceSize) {
 	superblock.device_size = deviceSize;
 	superblock.block_num = deviceSize/BLOCK_SIZE;
 	
-	superblock.FirstDaBlock = firstDataBlock;
-	superblock.Indirect_block = IndirectBlock_block;
 	
-	// Set all inode_mat bits to 0
+	// Set all inode_map bits to 0
 	for (int i = 0; i < MAX_FILE_NUM; i++){
-		bitmat_setbit(superblock.inode_map, i, 0); //free
+		bitmap_setbit(superblock.inode_map, i, 0); //free
 	}
 
 	// Set all block_map bits to 0
 	for (int i = 0; i < MAX_BLOCK_NUM; i++) {
-		bitmat_setbit(superblock.block_map, i, 0); //free
+		bitmap_setbit(superblock.block_map, i, 0); //free
 	}
-
+	
 	// Initialize all inodes to 0
-	for (int i=0; i < MAX_FILE_NUM; i++) {
-        memset(&(inodes[i]), 0, sizeof(inode_t) );
+	for (int i=0; i < INODES_SIZE; i++) {
+        memset(&(firstInodes[i]), '\0', sizeof(inode_t) );
     }
-
-	if (meta_writeToDisk() ==-1){
-		return -1;
-	}
-
-	//Initialize all indirect blocks to -1
-	int b[BLOCK_SIZE/4];
-	for (int i=0; i<BLOCK_SIZE/4; i++){
-		b[i] = -1;
-	}
-	// Write indirect_block block to disk
-	if (bwrite(DEVICE_IMAGE, superblock.Indirect_block, &b) == -1){
-		return -1;
-	}
+	for (int i=0; i < INODES_SIZE; i++) {
+        memset(&(secondInodes[i]), '\0', sizeof(inode_t) );
+    }
 
 	// Reset all data blocks
 	char empty_block[BLOCK_SIZE];
-	memset(empty_block, '0', BLOCK_SIZE);
+	memset(empty_block, '\0', BLOCK_SIZE);
 
 	for (int i = 0; i < superblock.block_num; i++) {
-		if (bwrite(DEVICE_IMAGE, i+firstDataBlock, empty_block) == -1) {
+		if (bwrite(DEVICE_IMAGE, firstDataBlock + i, empty_block) == -1) {
 			return -1;
 		}
+	}
+
+	if (meta_writeToDisk() == -1){
+		return -1;
 	}
 
 	return 0;
@@ -106,6 +97,7 @@ int unmountFS(void) {
 	} else {
 		return -1;
 	}
+
 	return 0;
 }
 
@@ -120,30 +112,46 @@ int createFile(char *fileName) {
 		return -2;
 	}
 	
-	int b_id, inode_id ;
+	int b_id, inode_id;
 
 	// Check if filename alredy exists
 	if (name_i(fileName) != -1 ){
 		return -1;
 	}
 
-	//If there isn't enought space return -2
+	// Alloc the inode and if  there isn't 
+	// enought space return -2
 	inode_id = ialloc();
     if (inode_id == -1){
         return -2;
 	}
-    
+    // Alloc the block and if  there isn't 
+	// enought space return -2
 	b_id = balloc();
-	// If there isn't disk space then free the inode
     if (b_id == -1) {
-		ifree(inode_id);
+		ifree(inode_id); // If there is no block space free the inode also
         return -2;
     }
-
-	// Set dafualt settings for the new inode
-    strcpy(inodes[inode_id].name, fileName);
-    inodes[inode_id].direct_block = b_id;
-	inodes[inode_id].size = 0;
+	// Check that the name size is legal
+	if (sizeof(fileName) > MAX_NAME_LENGHT) {return -1;}
+	
+	// Set default settings for the new inode
+	if ((inode_id/INODES_SIZE)==0){
+    	strcpy(firstInodes[inode_id].name, fileName);
+		firstInodes[inode_id%INODES_SIZE].direct_block[0] = b_id;
+		for (int i = 1; i < sizeof(firstInodes[inode_id%INODES_SIZE].direct_block)/4; i++){
+			firstInodes[inode_id%INODES_SIZE].direct_block[i] = -1;
+		}
+		firstInodes[inode_id%INODES_SIZE].size = 0;
+	}else {
+		strcpy(secondInodes[inode_id%INODES_SIZE].name, fileName);
+		secondInodes[inode_id%INODES_SIZE].direct_block[0] = b_id;
+		for (int i = 1; i < sizeof(secondInodes[inode_id%INODES_SIZE].direct_block)/4; i++){
+			secondInodes[inode_id%INODES_SIZE].direct_block[i] = -1;
+		}
+		secondInodes[inode_id%INODES_SIZE].size = 0;
+	}
+    
     
 	// Set the offset and state in file desctiptor
 	inodes_x[inode_id].offset    = 0;
@@ -158,43 +166,48 @@ int createFile(char *fileName) {
  * @return	0 if success, -1 if the file does not exist, -2 in case of error..
  */
 int removeFile(char *fileName) {
-	// If filesystem isn't mounted return error
-	if (!isMounted){
-		return -2;
-	}
+	// // If filesystem isn't mounted return error
+	// if (!isMounted){
+	// 	return -2;
+	// }
 	
-	int b_id, inode_id;
+	// int b_id, inode_id;
 
-	// Check if filename exists
-	inode_id = name_i(fileName);
-	if (inode_id == -1){
-		return -1;
-	}
-	// Free the direct block
-	if (bfree(inodes[inode_id].direct_block) == -1) {return -2;}
+	// // Check if filename exists
+	// inode_id = name_i(fileName);
+	// if (inode_id == -1){
+	// 	return -1;
+	// }
+	// // Free the direct block
+	// if (bfree(inodes[inode_id].direct_block) == -1) {return -2;}
 	
-	// Get the number of blocks occupied
-	int blocks = inodes[inode_id].size/2048;
-	if (blocks > 1){
-		blocks = blocks-1;
-		// Free all the indirect blocks
-		for (int i = 0; i<blocks; i++){
-			b_id = b_map(inode_id, (BLOCK_SIZE*i)+1);
-			if (bfree(b_id) == -1) {return -2;}
-		}
+	// // Get the number of blocks occupied
+	// int blocks = inodes[inode_id].size/2048;
+	// if (blocks > 1){
+	// 	blocks = blocks-1;
+	// 	// Free all the indirect blocks
+	// 	for (int i = 0; i<blocks; i++){
+	// 		b_id = b_map(inode_id, (BLOCK_SIZE*i)+1);
+	// 		if (bfree(b_id) == -1) {return -2;}
+	// 	}
 
-		// Reset indirectBlocks_block lines to -1 
-		int b[BLOCK_SIZE/4];
-		if (bread(DEVICE_IMAGE, superblock.Indirect_block, &b) == -1){return -2;}
-		for (int i=0; i<blocks; i++){
-			b[(inode_id*4)+i]=-1;
-		}
-		if (bwrite(DEVICE_IMAGE, superblock.Indirect_block, &b) == -1){return -2;}
-	}
+	// 	// Reset indirectBlocks_block lines to -1 
+	// 	char b[BLOCK_SIZE];
+	// 	if (bread(DEVICE_IMAGE, superblock.Indirect_block, b) == -1){return -2;}
+	// 	int indirect_block[BLOCK_SIZE/4];
+	// 	memcpy((char*)indirect_block, b, BLOCK_SIZE);
+		
+	// 	for (int i=0; i<blocks; i++){
+	// 		indirect_block[(inode_id*4)+i]=-1;
+	// 	}
 
-	if (ifree(inode_id) == -1 ){return -2;} 
-	superblock.num_inodes--;
-	return 0;
+	// 	memmove(b, (char*)indirect_block, BLOCK_SIZE);
+	// 	if (bwrite(DEVICE_IMAGE, superblock.Indirect_block, b) == -1){return -2;}
+	// }
+
+	// if (ifree(inode_id) == -1 ){return -2;} 
+	// superblock.num_inodes--;
+	 return 0;
 }
 
 /*
@@ -250,86 +263,154 @@ int closeFile(int fileDescriptor){
  * @return	Number of bytes properly read, -1 in case of error.
  */
 int readFile(int fileDescriptor, void *buffer, int numBytes) {
-	int position, blocks, toread;
-
-	// If filesystem isn't mounted return error
-	if (!isMounted){
-		return -1;
-	}
+	if (!isMounted) { return -1; }
+	// Check that the file is legal and exists
+	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) { return -1;}
+	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){ return -1; }
+	// Check that numBytes has the right size
+	if (numBytes < 0 || numBytes > sizeof(buffer)) { return -1; }
+	if (numBytes == 0) { return 0;}
 	
-	//Check that the file exist
-	if(bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){
-		return -1;
-	}
-	
-	// Check that the file is open
-	if(inodes_x[fileDescriptor].state == CLOSE){
-		return -1;
-	}
-
-	// Check that the size to read is less than 0
-	if( numBytes <= 0){
-		return -1;
-	}
-	
-	// Check that the size to read is less than the remaining size
-	position = inodes_x[fileDescriptor].offset;
-	if (position == inodes[fileDescriptor].size - 1) {return 0;} 
-	if (numBytes > inodes[fileDescriptor].size - position) {
-		numBytes = numBytes - (inodes[fileDescriptor].size - position);
-	}
-
-	blocks = ((position + numBytes)/BLOCK_SIZE) +1;
+	int size, position = inodes_x[fileDescriptor].offset;
+	int blocks, readed = 0, toread = 0;
 	char b[BLOCK_SIZE];
+	memset(b, '\0', BLOCK_SIZE);
 
-	int readed = 0;
-	int toread, block_id;
-	for (int i = 0; i < blocks; i++){
-		if (i==0){//First block to read
-			block_id = b_map(fileDescriptor, position); 
-			toread = BLOCK_SIZE - (position%BLOCK_SIZE);
-			bread(DEVICE_IMAGE, superblock.FirstDaBlock + block_id, b); 
-			memmove(buffer+readed, b+position%BLOCK_SIZE, toread); 
-			readed += toread; 
-			position += toread;
-		} 
-		else if(i==blocks-1){ //Last block to read
-			block_id = b_map(fileDescriptor, position);
-			toread = numBytes - readed;
-			bread(DEVICE_IMAGE, superblock.FirstDaBlock + block_id, b);
-			memmove(buffer+readed, b, toread);
-			readed += toread;
-			position += toread;
+	if ((fileDescriptor/INODES_SIZE)==0){
+		size = firstInodes[fileDescriptor%INODES_SIZE].size;
+		if (size == position){
+			return 0;
 		}
-		else{ //Intermediate blocks
-			block_id = b_map(fileDescriptor, position);
-			bread(DEVICE_IMAGE, superblock.FirstDaBlock + block_id, b);
-			memmove(buffer+readed, b, BLOCK_SIZE);  
-			readed += BLOCK_SIZE;
-			position += BLOCK_SIZE;
-		}		
+	}else{
+		size = secondInodes[fileDescriptor%INODES_SIZE].size;
+		if (size == position){
+			return 0;
+		}
 	}
+
+	// If the bytes to read are greater than the available bytes
+	//  then read only the bytes available
+	if (numBytes > size - position){
+		numBytes = size - position;
+	}
+
+	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
 	
-	inodes_x[fileDescriptor].offset = position; //Hay que llamar a lseek?
-	return readed;
+	for (int i = 0; i < blocks; i++){
+		int block_id = b_map(fileDescriptor, position); // Get the number of block to read
+		if (block_id == -1){ return -1; }
+		
+		if ((i!=blocks-1 && (blocks>1))){
+			toread = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to read
+		}else{
+			toread = numBytes - readed; // Get the size to write
+		}
+		// Read the block, and append the bytes 'toread'
+		// to the buffer
+		if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){ return -1; };
+		memmove(buffer+readed, b+position%BLOCK_SIZE, toread);
+		readed += toread;
+		position += toread;
+	}	
+	// Update offset and size
+	inodes_x[fileDescriptor].offset += numBytes;
+
+	return numBytes;
 }
 
 /*
  * @brief	Writes a number of bytes from a buffer and into a file.
  * @return	Number of bytes properly written, -1 in case of error.
  */
-int writeFile(int fileDescriptor, void *buffer, int numBytes)
-{
-	return -1;
+int writeFile(int fileDescriptor, void *buffer, int numBytes){
+	if (!isMounted) {return -1;}
+	// Check that the file is legal and exists
+	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) { return -1;}
+	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){return -1;}
+	// Check that numBytes has the right size
+	if (numBytes < 0 || numBytes > sizeof(buffer)) {return -1;}
+	if (numBytes == 0 || inodes_x[fileDescriptor].offset == MAX_FILE_SIZE) {return 0;}
+
+	int position = inodes_x[fileDescriptor].offset;
+	int blocks, writed = 0;
+	char b[BLOCK_SIZE];
+	memset(b, '\0', BLOCK_SIZE);
+
+	
+	if (numBytes > MAX_FILE_SIZE - position){
+		numBytes = MAX_FILE_SIZE - position;
+	}
+	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
+	for (int i = 0; i < blocks; i++){
+		// Case: first block
+		if (i == 0){
+			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
+			if (block_id == -1){ return -1; }
+			int towrite = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to write
+			// Read the block, append the first 'towrite' bytes of buffer
+			// and then write it in disk
+			if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
+			memmove(b+(position%BLOCK_SIZE), buffer, towrite);
+			if (bwrite(DEVICE_IMAGE, firstDataBlock +block_id, b) == -1){return -1;};
+			writed += towrite;
+			position += towrite;
+		}
+		// Case: last block
+		else if (i==blocks-1){
+			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
+			if (block_id == -1){ return -1; }
+			int towrite = numBytes - writed; // Get the size to write
+			// Read the block append it at the begining the 
+			// last 'towrite' bytes of buffer and write it on disk
+			if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == 1) {return -1;};
+			memmove(b, buffer+writed, towrite);
+			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1) {return -1;}
+			writed += towrite;
+			position += towrite;				
+		}
+		// Case: middle block
+		else {
+			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
+			if (block_id == -1){ return -1; }
+			memmove(b, buffer+writed, BLOCK_SIZE);
+			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1) {return -1;}
+			writed += BLOCK_SIZE;
+			position += BLOCK_SIZE;
+		}
+	}
+	// Update offset and size
+	inodes_x[fileDescriptor].offset += numBytes;
+	if ((fileDescriptor/INODES_SIZE) == 0){
+		firstInodes[fileDescriptor%INODES_SIZE].size += numBytes;
+	}else {
+		secondInodes[fileDescriptor%INODES_SIZE].size += numBytes;
+	}
+	return numBytes;
 }
 
 /*
  * @brief	Modifies the position of the seek pointer of a file.
  * @return	0 if succes, -1 otherwise.
  */
-int lseekFile(int fileDescriptor, long offset, int whence)
-{
-	return -1;
+int lseekFile(int fileDescriptor, long offset, int whence) {
+	if (!isMounted) {return -1;}
+	if ( fileDescriptor < 0 || fileDescriptor > MAX_FILE_NUM) {return -1;}
+	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0) {return -1;}
+	
+	if (whence == FS_SEEK_BEGIN){
+		inodes_x[fileDescriptor].offset = 0;
+	}else if (whence == FS_SEEK_CUR){
+		int newPosition = (inodes_x[fileDescriptor].offset + offset);
+		if (newPosition < 0 || newPosition > MAX_FILE_SIZE){return -1;}
+		inodes_x[fileDescriptor].offset = newPosition; 
+	}else{
+		if ((fileDescriptor/INODES_SIZE) == 0){
+			inodes_x[fileDescriptor].offset = firstInodes[fileDescriptor].size;
+		} else {
+			inodes_x[fileDescriptor].offset = secondInodes[fileDescriptor].size;	
+		}
+	}
+	return 0;
 }
 
 /*
@@ -396,14 +477,17 @@ int removeLn(char *linkName)
  * @return 	Position if success, -1 otherwise.
  */
 int ialloc(void){
-	int i;
 
 	// search for the first free inode
-	for (i = 0; i < MAX_FILE_NUM; i++){
+	for (int i = 0; i < MAX_FILE_NUM; i++){
 		if (bitmap_getbit(superblock.inode_map, i) == 0) {
-			// Now inode its not free
-			bitmap_setbit(superblock.inode_map, i, 1);
-			memset(&(inodes[i]), 0, sizeof(inode_t));
+			bitmap_setbit(superblock.inode_map, i, 1); // Set it as occupied
+			// Check if the first free inode it's in first inode block
+			if ((i/INODES_SIZE) == 0){
+				memset(&(firstInodes[i%INODES_SIZE]), '\0', sizeof(inode_t));	
+			}else{
+				memset(&(secondInodes[i%INODES_SIZE]), '\0', sizeof(inode_t));	
+			}
 			// We return it's position
 			return i;
 		}
@@ -422,16 +506,13 @@ int balloc(void){
 	char b[BLOCK_SIZE];
 
 	// Search for first free block
-	for (int i = 0; i < superblock.block_num; ++i)
-	{
-		if (bitmap_getbit(superblock.block_map, i) == 0)
-		{
-			// Now it's not free
-			bitmap_setbit(superblock.block_map, i, 1);
+	for (int i = 0; i < superblock.block_num; ++i) {
+		if (bitmap_getbit(superblock.block_map, i) == 0){
+			bitmap_setbit(superblock.block_map, i, 1); // Set it as occupied
 
 			// We write the dummy block
-			memset(b, 0, BLOCK_SIZE);
-			bwrite(DEVICE_IMAGE, superblock.FirstDaBlock + i, b);
+			memset(b, '\0', BLOCK_SIZE);
+			bwrite(DEVICE_IMAGE, firstDataBlock + i, b);
 
 			// We return it's position
 			return i;
@@ -446,14 +527,21 @@ int balloc(void){
  * @return 	0 if success, -1 otherwise.
  */
 int ifree(int inode_id) {
-	
+	// Check that inode_id is a legal and non-free id
+	if (inode_id > MAX_FILE_NUM){ return -1; } 
 	if (bitmap_getbit(superblock.inode_map, inode_id) == 0){
 		return -1;
 	}
 
 	// free inode
 	bitmap_setbit(superblock.inode_map, inode_id, 0);
-
+	//Set inode to 0
+	if ( (inode_id/INODES_SIZE) == 0) { 
+		memset(&(firstInodes[inode_id%INODES_SIZE]), '\0', sizeof(inode_t));	
+	} else {
+		memset(&(secondInodes[inode_id%INODES_SIZE]), '\0', sizeof(inode_t));	
+	}
+	
 	return 0;
 }
 
@@ -462,14 +550,19 @@ int ifree(int inode_id) {
  * @return 	0 if success, -1 otherwise.
  */
 int bfree(int block_id){
-
+	// Check that inode_id is a legal and non-free id
+	if (block_id > superblock.block_num) { return -1; }
 	if (bitmap_getbit(superblock.block_map, block_id) == 0){
 		return -1;
 	}
 
-	// free block
+	// free the bit in the bitmap
 	bitmap_setbit(superblock.block_map, block_id, 0);
-
+	
+	// free the block in memory
+	char b[BLOCK_SIZE]; // dummy block for reseting 
+	memset(b, '\0', BLOCK_SIZE);
+	bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b);
 	return 0;
 }
 
@@ -479,13 +572,21 @@ int bfree(int block_id){
  */
 int name_i(char *fname){
 
-	// search an i-node with name <fname>
-	for (int i = 0; i < superblock.num_inodes; i++){
-		if (!strcmp(inodes[i].name, fname)){
+	// search an i-node with name <fname> in the first inode block
+	for (int i = 0; i < INODES_SIZE; i++){
+		if (!strcmp(firstInodes[i%INODES_SIZE].name, fname)){
 			//Return de inode id
 			return i;
 		}
 	}
+	// search an i-node with name <fname> in the second inode block
+	for (int i = 0; i < INODES_SIZE; i++){
+		if (!strcmp(secondInodes[i%INODES_SIZE].name, fname)){
+			//Return de inode id
+			return i;
+		}
+	}
+
 	//Return -1 if not found
 	return -1;
 }
@@ -495,38 +596,39 @@ int name_i(char *fname){
  * @return 	block id if success, -1 otherwise.
  */
 int b_map(int inode_id, int offset) {
-	int b[BLOCK_SIZE / 4];
 
+	// Check that the inode_id is legal and non-free
+	if (inode_id>MAX_FILE_NUM) {return -1;}
 	if (bitmap_getbit(superblock.inode_map, inode_id) == 0){
 		return -1;
 	}
-
-	// Check that the offset is smaller than maximum size
-	if (offset > inodes[inode_id].size){
-		return -1;
-	}
-
-	// return direct block
-	if (offset < BLOCK_SIZE){
-		return inodes[inode_id].direct_block;
-	}
-	// return indirect block
-	else {
-		// Get inode first index in indirect_block block
-		int firstLine = inode_id * 4;
-		// Get the absolute index where inode is
-		int line = firstLine + (offset/BLOCK_SIZE);
-		// Read from memory the indirect_blocks block
-		bread(DEVICE_IMAGE, superblock.Indirect_block, b);
-		// If it isn't initialized, then alloc a block
-		if (b[line] == -1) {
-			int b_id = balloc();
-			b[line] = b_id;
-			bwrite(DEVICE_IMAGE, superblock.Indirect_block, (&b));
-			return b_id;
-		}else {
-			return b[line];
+	
+	if ( (inode_id/INODES_SIZE) == 0 ){
+		// Check for a legal offset
+		if (offset > firstInodes[inode_id%INODES_SIZE].size){
+			return -1;
 		}
+		int block = offset/BLOCK_SIZE; // Calculate the block of this offset
+		// Check if it's alredy initializated and it not
+		// make a balloc, finally return the block number
+		if (firstInodes[inode_id%INODES_SIZE].direct_block[block] == -1 ){
+			int block_id = balloc();
+			firstInodes[inode_id%INODES_SIZE].direct_block[block] = block_id;
+		}
+		return firstInodes[inode_id%INODES_SIZE].direct_block[block];
+	}else{
+		// Check for a legal offset
+		if (offset > secondInodes[inode_id%INODES_SIZE].size){
+			return -1;
+		}
+		int block = offset/BLOCK_SIZE; // Calculate the block of this offset
+		// Check if it's alredy initializated and it not
+		// make a balloc, finally return the block number
+		if (secondInodes[inode_id%INODES_SIZE].direct_block[block] == -1 ){
+			int block_id = balloc();
+			secondInodes[inode_id%INODES_SIZE].direct_block[block] = block_id;
+		}
+		return secondInodes[inode_id%INODES_SIZE].direct_block[block];
 	}
 
 	return -1;
@@ -538,15 +640,19 @@ int b_map(int inode_id, int offset) {
  */
 int meta_readFromDisk(void){
 
-	// Read the superblock from disk to memory
-	if (bread(DEVICE_IMAGE, SuperBlock_Block, &superblock) == -1){
-		return -1;
-	}
+	char b[BLOCK_SIZE];
 
-	// Read the inodes from disk to memory
-	if (bread(DEVICE_IMAGE, Inodes_Block, &inodes) == -1){
-		return -1;
-	}
+	// Read the superblock from disk to memory
+	if (bread(DEVICE_IMAGE, SuperBlock_Block, b) == -1){return -1;}
+	memcpy((char*)&superblock, b, BLOCK_SIZE);
+
+	// Read the frist 24 inodes from disk to memory
+	if (bread(DEVICE_IMAGE, firstInodes_Block, b) == -1){return -1;}
+	memcpy((char*)&firstInodes, b, BLOCK_SIZE);
+
+	// Read the second 24 inodes from disk to memory
+	if (bread(DEVICE_IMAGE, secondInodes_Block, b) == -1){return -1;}
+	memcpy((char*)&secondInodes, b, BLOCK_SIZE);
 
 	return 0;
 }
@@ -557,14 +663,21 @@ int meta_readFromDisk(void){
  */
 int meta_writeToDisk(void){
 
-	// Write the superblock from memory to disk
-	if (bwrite(DEVICE_IMAGE, SuperBlock_Block, &superblock) == -1){
-		return -1;
-	}
-	// Write the inodes from memory to disk
-	if (bwrite(DEVICE_IMAGE, Inodes_Block, &inodes) == -1){
-		return -1;
-	}
+	// write in disk the superblock
+	char buff[BLOCK_SIZE];
+	memset(buff, '\0', BLOCK_SIZE);
+	memcpy(buff, (char*) &superblock, sizeof(superblock));
+	if (bwrite(DEVICE_IMAGE, 0, buff) == -1) { return -1; }
+
+	// Write the first 24 inodes from memory to disk
+	memset(buff, '\0', BLOCK_SIZE);
+	memcpy(buff, (char*)&firstInodes, BLOCK_SIZE);
+	if (bwrite(DEVICE_IMAGE, firstInodes_Block, buff)){return -1;}
+
+	// Write the second 24 inodes from memory to disk
+	memset(buff, '\0', BLOCK_SIZE);
+	memcpy(buff, (char*)&secondInodes, BLOCK_SIZE);
+	if (bwrite(DEVICE_IMAGE, secondInodes_Block, buff)){return -1;}	
 
 	return 0;
 }

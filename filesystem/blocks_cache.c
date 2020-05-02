@@ -61,7 +61,7 @@ int bwrite(char *deviceName, int blockNumber, char*buffer) {
 	int fd = open(deviceName, O_WRONLY);
 
 	if(fd < 0){
-		/* fprintf(stderr, "ERROR: UNABLE TO OPEN DISK FILE %s \n", deviceName); */
+		// fprintf(stderr, "ERROR: UNABLE TO OPEN DISK FILE %s \n", deviceName); 
 		return -1;
 	}
 

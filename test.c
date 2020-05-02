@@ -13,6 +13,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "filesystem/filesystem.h"
 
 
@@ -22,23 +23,23 @@
 #define ANSI_COLOR_GREEN "\x1b[32m"
 #define ANSI_COLOR_BLUE "\x1b[34m"
 
-#define N_BLOCKS 25					  // Number of blocks in the device
-#define DEV_SIZE N_BLOCKS *BLOCK_SIZE // Device size, in bytes
+#define N_BLOCKS 240				   // Number of blocks in the device
+#define DEV_SIZE N_BLOCKS * BLOCK_SIZE // Device size, in bytes
 
 int main()
 {
 	int ret;
 	
-	///////
-	ret = mkFS(DEV_SIZE);
-	if (ret != 0)
-	{
-		fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST mkFS ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
-		return -1;
-	}
-	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST mkFS ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
+	// ///////
+	// ret = mkFS(DEV_SIZE);
+	// if (ret != 0)
+	// {
+	// 	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST mkFS ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
+	// 	return -1;
+	// }
+	// fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST mkFS ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
 
-	///////
+	// /////
 
 	ret = mountFS();
 	if (ret != 0)
@@ -48,17 +49,51 @@ int main()
 	}
 	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST mountFS ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
 
-	///////
+	// // ///////
 
-	ret = createFile("/test.txt");
-	if (ret != 0)
+	// ret = createFile("/test.txt");
+	// if (ret != 0)
+	// {
+	// 	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST createFile ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
+	// 	return -1;
+	// }
+	// fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST createFile ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
+	
+	// /////////
+
+	int fd = openFile("/test.txt");
+	if (fd != 0)
 	{
-		fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST createFile ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
+		fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST openFile ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
 		return -1;
 	}
-	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST createFile ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
+	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST openFile ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
 
-	///////
+	///////////
+
+	char *buff = "Holaaaaaaaaaa";
+	// ret = writeFile(fd, buff, sizeof(buff)); 
+	// if (ret < 0)
+	// {
+	// 	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST writeFile ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
+	// 	return -1;
+	// }
+	// fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST writeFile ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
+	// fprintf(stderr, "Bytes writed:  %d,  expected %ld\n", ret, sizeof(buff));
+
+
+	lseekFile(fd, 0, FS_SEEK_BEGIN);
+	char *otro = malloc(sizeof(buff));
+	memset(otro, '\0', sizeof(buff)*sizeof(char));
+	ret = readFile(fd, otro, sizeof(buff)); 
+	if (ret < 0)
+	{
+		fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST readFile ", ANSI_COLOR_RED, "FAILED\n", ANSI_COLOR_RESET);
+		return -1;
+	}
+	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST readFile ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
+	fprintf(stdout, "Bytes readed:  %d,  expected %ld\n", ret, sizeof(buff));
+	fprintf(stdout, "Readed:  %s\n", buff);
 
 	ret = unmountFS();
 	if (ret != 0)
@@ -68,7 +103,7 @@ int main()
 	}
 	fprintf(stdout, "%s%s%s%s%s", ANSI_COLOR_BLUE, "TEST unmountFS ", ANSI_COLOR_GREEN, "SUCCESS\n", ANSI_COLOR_RESET);
 
-	///////
+	// ///////
 
 	return 0;
 }
