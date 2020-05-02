@@ -17,8 +17,6 @@
 
 #define MAX_BLOCK_NUM 48*5
 
-#define INODES_SIZE MAX_FILE_NUM/2
-
 /* Superblock type */
 typedef struct superblock {
   unsigned int magic_num;	                /* Magic number for checking integrity */
@@ -30,13 +28,24 @@ typedef struct superblock {
   char padding[BLOCK_SIZE-(4*sizeof(int))-(MAX_FILE_NUM/8)-(MAX_BLOCK_NUM/8)]; /* Padding (for filling the block) */
 } superblock_t;
 
+#define INODE 0
+#define LINK  1
+
 /* Disk inode type */
-typedef struct inode {
-  char name[MAX_NAME_LENGHT];	             /* Filename */
-  unsigned int size;	                     /* Current file size in bytes */
-  unsigned int direct_block[5];            /* Number of the direct block */
-  uint32_t crc[5];
-  char padding[80-76];          
+typedef struct{
+  int type;                                /* Type (inode or link) */
+  union  {
+    struct inode {
+      char name[MAX_NAME_LENGHT];	             /* Filename */
+      unsigned int size;	                     /* Current file size in bytes */
+      unsigned int direct_block[5];            /* Number of the direct block */
+      uint32_t crc[5];
+    }inode;
+    struct soft_link {
+      char source[MAX_NAME_LENGHT];
+      char link[MAX_NAME_LENGHT];
+    }soft_link;    
+  };                        
 } inode_t;
 
 /* File descriptor table only in memory */
@@ -51,8 +60,7 @@ struct {
 #define CLOSE 0
 
 superblock_t superblock;                // superblock declaration
-inode_t firstInodes[INODES_SIZE];   // First inodes block declaration
-inode_t secondInodes[INODES_SIZE];  // Second inodes block declaration
+inode_t inodes[MAX_FILE_NUM];           // First inodes block declaration
 
 #define FALSE 0
 #define TRUE  1

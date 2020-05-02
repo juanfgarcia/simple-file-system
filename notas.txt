@@ -1,6 +1,38 @@
--Preguntar: se puede hacer mkFS con tamaños inferiores al del requisito?
+-Preguntas:
+    - se puede hacer mkFS con tamaños inferiores al del requisito?
 
--Preguntar: se comprueba igual que un fichero no tenga integridad que que este corruputo? es decir, la funcion checkFile para ambas.
-NF10 Si se quiere abrir un fichero sin integridad con las funciones de integridad, deberá añadirse su integridad previamente (función includeIntegrity).
+    - se comprueba igual que un fichero no tenga integridad que que este corruputo? es decir, la funcion checkFile para ambas.
+    NF10 Si se quiere abrir un fichero sin integridad con las funciones de integridad, deberá añadirse su integridad previamente (función includeIntegrity).
 
--
+    - Por que en disk.dat aparecen cosas que no hemos escrito????
+
+    - openFile sobre un enlace????
+
+    - Que hacemos con inodes_x[] con los enlaces simbolicos, si hacemos read de un
+    enlace se actualza el puntero del source?
+
+    - no se puede crear un enlace con nombre de otra fichero no?
+
+
+-TODO:
+    - Revision de los requisitos y del codigo
+    - Memoria: Introducción 
+    - Memoria: Diseño --> Saray
+        - Overview del sistema
+        - Estructuras de datos (todo lo creado en metadata.h)
+        - Detalles de los calculos
+    - Memoria: codigo
+        - Funciones auxiliares
+        - Funcionamiento de:
+            - mkFS, mount y umount -> Gestion del FS
+            - open, read, write, close, remove, lseek-> Gestion de los ficheros
+            - integridad
+            - enlaces (modificaciones en la gestion de ficheros)
+    - Memoria: Bateria de pruebas --> Juan
+        - Tabla por prueba que contiene:
+            - Descripcion
+            - Salida esperada
+            - Salida obtenida
+            - Trazabilidad 
+    - Memoria: conclusiones
+

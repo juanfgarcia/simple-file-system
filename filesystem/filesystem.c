@@ -43,13 +43,10 @@ int mkFS(long deviceSize) {
 	}
 	
 	// Initialize all inodes to 0
-	for (int i=0; i < INODES_SIZE; i++) {
-        memset(&(firstInodes[i]), '\0', sizeof(inode_t) );
+	for (int i=0; i < MAX_FILE_NUM; i++) {
+        memset(&(inodes[i]), '\0', sizeof(inode_t) );
     }
-	for (int i=0; i < INODES_SIZE; i++) {
-        memset(&(secondInodes[i]), '\0', sizeof(inode_t) );
-    }
-
+	
 	// Reset all data blocks
 	char empty_block[BLOCK_SIZE];
 	memset(empty_block, '\0', BLOCK_SIZE);
@@ -133,24 +130,17 @@ int createFile(char *fileName) {
         return -2;
     }
 	// Check that the name size is legal
-	if (sizeof(fileName) > MAX_NAME_LENGHT) {return -1;}
+	if (strlen(fileName) > MAX_NAME_LENGHT) {return -1;}
 	
 	// Set default settings for the new inode
-	if ((inode_id/INODES_SIZE)==0){
-    	strcpy(firstInodes[inode_id].name, fileName);
-		firstInodes[inode_id%INODES_SIZE].direct_block[0] = b_id;
-		for (int i = 1; i < sizeof(firstInodes[inode_id%INODES_SIZE].direct_block)/4; i++){
-			firstInodes[inode_id%INODES_SIZE].direct_block[i] = -1;
-		}
-		firstInodes[inode_id%INODES_SIZE].size = 0;
-	}else {
-		strcpy(secondInodes[inode_id%INODES_SIZE].name, fileName);
-		secondInodes[inode_id%INODES_SIZE].direct_block[0] = b_id;
-		for (int i = 1; i < sizeof(secondInodes[inode_id%INODES_SIZE].direct_block)/4; i++){
-			secondInodes[inode_id%INODES_SIZE].direct_block[i] = -1;
-		}
-		secondInodes[inode_id%INODES_SIZE].size = 0;
+	inodes[inode_id].type = INODE;
+	strcpy(inodes[inode_id].inode.name, fileName);
+	inodes[inode_id].inode.direct_block[0] = b_id;
+	for (int i = 1; i < sizeof(inodes[inode_id].inode.direct_block)/4; i++){
+		inodes[inode_id].inode.direct_block[i] = -1;
 	}
+	inodes[inode_id].inode.size = 0;
+
     
     
 	// Set the offset and state in file desctiptor
@@ -179,23 +169,14 @@ int removeFile(char *fileName) {
 		return -1;
 	}
 	// Free the direct block
-	if ((inode_id/INODES_SIZE) == 0){
-		for (int i=0; i<5; i++){
-			int block = firstInodes[inode_id].direct_block[i];
-			if (block != -1){
-				if (bfree(block) == -1) { return -2;}
-			}
-		}
-	}else{
-		for (int i=0; i<5; i++){
-			int block = secondInodes[inode_id].direct_block[i];
-			if (block != -1){
-				if (bfree(block) == -1) { return -2;}
-			}
+	
+	for (int i=0; i<5; i++){
+		int block = inodes[inode_id].inode.direct_block[i];
+		if (block != -1){
+			if (bfree(block) == -1) { return -2;}
 		}
 	}
 	
-
 	if (ifree(inode_id) == -1 ){ return -2;} 
 	superblock.num_inodes--;
 	return 0;
@@ -257,30 +238,33 @@ int closeFile(int fileDescriptor){
  * @return	Number of bytes properly read, -1 in case of error.
  */
 int readFile(int fileDescriptor, void *buffer, int numBytes) {
-	if (!isMounted) { return -1; }
+	if (!isMounted) {printf("1");return -1; }
 	// Check that the file is legal and exists
-	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) { return -1;}
-	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){ return -1; }
+	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) {printf("2"); return -1;}
+	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){printf("3"); return -1; }
 	// Check that numBytes has the right size
-	if (numBytes < 0) { return -1; }
-	if (numBytes == 0) { return 0;}
+	if (numBytes < 0) {printf("4"); return -1; }
+	if (numBytes == 0) {printf("5"); return 0;}
+	if (inodes_x[fileDescriptor].state == CLOSE) {return -1;}
+	
+	printf ("El tipo es: %d", inodes[fileDescriptor].type);
+
+	if (inodes[fileDescriptor].type == LINK){
+		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		return readFile(source_fd, buffer, numBytes);
+	}
 	
 	int size, position = inodes_x[fileDescriptor].offset;
 	int blocks, readed = 0, toread = 0;
 	char b[BLOCK_SIZE];
 	memset(b, '\0', BLOCK_SIZE);
 
-	if ((fileDescriptor/INODES_SIZE)==0){
-		size = firstInodes[fileDescriptor%INODES_SIZE].size;
-		if (size == position){
-			return 0;
-		}
-	}else{
-		size = secondInodes[fileDescriptor%INODES_SIZE].size;
-		if (size == position){
-			return 0;
-		}
-	}
+	
+	size = inodes[fileDescriptor].inode.size;
+	if (size == position){return 0;}
+	
+	
 
 	// If the bytes to read are greater than the available bytes
 	//  then read only the bytes available
@@ -324,6 +308,14 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	// Check that numBytes has the right size
 	if (numBytes < 0) {return -1;}
 	if (numBytes == 0 || inodes_x[fileDescriptor].offset == MAX_FILE_SIZE) {return 0;}
+	if (inodes_x[fileDescriptor].state == CLOSE) {return -1;}
+
+
+	if (inodes[fileDescriptor].type == LINK){
+		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		return writeFile(source_fd, buffer, numBytes);
+	}
 
 	int position = inodes_x[fileDescriptor].offset;
 	int blocks, writed = 0;
@@ -374,11 +366,7 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	}
 	// Update offset and size
 	inodes_x[fileDescriptor].offset += numBytes;
-	if ((fileDescriptor/INODES_SIZE) == 0){
-		firstInodes[fileDescriptor%INODES_SIZE].size += numBytes;
-	}else {
-		secondInodes[fileDescriptor%INODES_SIZE].size += numBytes;
-	}
+	inodes[fileDescriptor].inode.size += numBytes;
 	return numBytes;
 	
 }
@@ -391,6 +379,13 @@ int lseekFile(int fileDescriptor, long offset, int whence) {
 	if (!isMounted) {return -1;}
 	if ( fileDescriptor < 0 || fileDescriptor > MAX_FILE_NUM) {return -1;}
 	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0) {return -1;}
+
+
+	if (inodes[fileDescriptor].type == LINK){
+		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		return lseekFile(source_fd, offset, whence);
+	}
 	
 	if (whence == FS_SEEK_BEGIN){
 		inodes_x[fileDescriptor].offset = 0;
@@ -399,11 +394,8 @@ int lseekFile(int fileDescriptor, long offset, int whence) {
 		if (newPosition < 0 || newPosition > MAX_FILE_SIZE){return -1;}
 		inodes_x[fileDescriptor].offset = newPosition; 
 	}else{
-		if ((fileDescriptor/INODES_SIZE) == 0){
-			inodes_x[fileDescriptor].offset = firstInodes[fileDescriptor].size;
-		} else {
-			inodes_x[fileDescriptor].offset = secondInodes[fileDescriptor].size;	
-		}
+		inodes_x[fileDescriptor].offset = inodes[fileDescriptor].inode.size;
+		
 	}
 	return 0;
 }
@@ -418,36 +410,30 @@ int checkFile(char *fileName){
 	if (!isMounted){return -2;}
 	if ((inode_id = name_i(fileName))==-1) {return -2;}
 
+
+	if (inodes[inode_id].type == LINK){
+		int source_fd = name_i(inodes[inode_id].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		return checkFile(inodes[inode_id].soft_link.source);
+	}
+
 	char b[BLOCK_SIZE];
 	memset(b, '\0', BLOCK_SIZE);
 
-	if ((inode_id/INODES_SIZE)==0){
-		int blocks[5];
-		memcpy(blocks,  firstInodes[inode_id%INODES_SIZE].direct_block, 5*sizeof(int));
-		for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
-			if (blocks[i] != -1){
-				if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b) == -1){return -2;}
-				uint32_t expected = CRC32((const unsigned char*)b, BLOCK_SIZE);
-				uint32_t got = firstInodes[inode_id%INODES_SIZE].crc[i];
-				if (expected != got ){
-					return -1;
-				}
-			}
-		}
-	}else{
-		int blocks[5];
-		memcpy(blocks,  secondInodes[inode_id%INODES_SIZE].direct_block, 5*sizeof(int));
-		for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
-			if (blocks[i] != -1){
-				if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b) == -1){return -2;}
-				uint32_t expected = CRC32((const unsigned char*)b, BLOCK_SIZE);
-				uint32_t got = secondInodes[inode_id%INODES_SIZE].crc[i];
-				if (expected != got ){
-					return -1;
-				}
+	
+	int blocks[5];
+	memcpy(blocks,  inodes[inode_id].inode.direct_block, 5*sizeof(int));
+	for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
+		if (blocks[i] != -1){
+			if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b) == -1){return -2;}
+			uint32_t expected = CRC32((const unsigned char*)b, BLOCK_SIZE);
+			uint32_t got = inodes[inode_id].inode.crc[i];
+			if (expected != got ){
+				return -1;
 			}
 		}
 	}
+	
 	return 0;
 }
 
@@ -462,27 +448,24 @@ int includeIntegrity(char *fileName) {
 	if ((inode_id = name_i(fileName))==-1) {return -1;}
 
 	char b[BLOCK_SIZE];
-	if ((inode_id/INODES_SIZE)==0){
-		int blocks[5];
-		memcpy(blocks,  firstInodes[inode_id%INODES_SIZE].direct_block, 5*sizeof(int));
-		for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
-			if (blocks[i] != -1){
-				if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b)){return -2;};
-				uint32_t crc = CRC32((const unsigned char*)b, BLOCK_SIZE);
-				firstInodes[inode_id%INODES_SIZE].crc[i] = crc;
-			}
-		}
-	}else{
-		int blocks[5];
-		memcpy(blocks,  secondInodes[inode_id%INODES_SIZE].direct_block, 5*sizeof(int));
-		for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
-			if (blocks[i] != -1){
-				if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b)){return -2;};
-				uint32_t crc = CRC32((const unsigned char*)b, BLOCK_SIZE);
-				secondInodes[inode_id%INODES_SIZE].crc[i] = crc;
-			}
+
+	if (inodes[inode_id].type == LINK){
+		int source_fd = name_i(inodes[inode_id].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		return includeIntegrity(inodes[inode_id].soft_link.source);
+	}
+	
+	
+	int blocks[5];
+	memcpy(blocks,  inodes[inode_id].inode.direct_block, 5*sizeof(int));
+	for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
+		if (blocks[i] != -1){
+			if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b)){return -2;};
+			uint32_t crc = CRC32((const unsigned char*)b, BLOCK_SIZE);
+			inodes[inode_id].inode.crc[i] = crc;
 		}
 	}
+	
 	return 0;
 }
 
@@ -515,13 +498,8 @@ int closeFileIntegrity(int fileDescriptor) {
 
 	if (inodes_x[fileDescriptor].integrity == FALSE) {return -1;}
 	
-	if ((fileDescriptor/INODES_SIZE) == 0) {
-		err = includeIntegrity(firstInodes[fileDescriptor%INODES_SIZE].name);
-		if (err < 0) {return -1;} 	 // Error 
-	}else{
-		err = includeIntegrity(secondInodes[fileDescriptor%INODES_SIZE].name);
-		if (err < 0) {return -1;} 	 // Error 
-	}	
+	err = includeIntegrity(inodes[fileDescriptor].inode.name);
+	if (err < 0) {return -1;} 	 // Error 
 	
 	err = closeFile(fileDescriptor);
 	if (err==-1) {return -1;}
@@ -533,16 +511,32 @@ int closeFileIntegrity(int fileDescriptor) {
  * @return	0 if success, -1 if file does not exist, -2 in case of error.
  */
 int createLn(char *fileName, char *linkName){
-	return -1;
+	if (!isMounted) {return -2;}
+	if (strlen(linkName) > MAX_FILE_SIZE ) {return -2;}
+	if (name_i(linkName) == 0) {return -2;}
+	if (name_i(fileName) < 0){return -1;}
+
+	int link = ialloc();
+	if (link < 0) {return -2;}
+
+	inodes[link].type = LINK;
+	strcpy(inodes[link].soft_link.source, fileName);
+	strcpy(inodes[link].soft_link.link, linkName);
+
+	return 0;
 }
 
 /*
  * @brief 	Deletes an existing symbolic link
  * @return 	0 if the file is correct, -1 if the symbolic link does not exist, -2 in case of error.
  */
-int removeLn(char *linkName)
-{
-	return -2;
+int removeLn(char *linkName) {
+	if (!isMounted) {return -2;}
+	int inode_id = name_i(linkName);
+	if (inode_id < 0) {return -1;}
+
+	if (ifree(inode_id) < 0) {return -2; }
+	return 0;
 }
 
 /*------------ Auxiliar functions ---------------------*/
@@ -558,11 +552,7 @@ int ialloc(void){
 		if (bitmap_getbit(superblock.inode_map, i) == 0) {
 			bitmap_setbit(superblock.inode_map, i, 1); // Set it as occupied
 			// Check if the first free inode it's in first inode block
-			if ((i/INODES_SIZE) == 0){
-				memset(&(firstInodes[i%INODES_SIZE]), '\0', sizeof(inode_t));	
-			}else{
-				memset(&(secondInodes[i%INODES_SIZE]), '\0', sizeof(inode_t));	
-			}
+			memset(&(inodes[i]), '\0', sizeof(inode_t));	
 			// We return it's position
 			return i;
 		}
@@ -611,11 +601,7 @@ int ifree(int inode_id) {
 	// free inode
 	bitmap_setbit(superblock.inode_map, inode_id, 0);
 	//Set inode to 0
-	if ( (inode_id/INODES_SIZE) == 0) { 
-		memset(&(firstInodes[inode_id%INODES_SIZE]), '\0', sizeof(inode_t));	
-	} else {
-		memset(&(secondInodes[inode_id%INODES_SIZE]), '\0', sizeof(inode_t));	
-	}
+	memset(&(inodes[inode_id]), '\0', sizeof(inode_t));	
 	
 	return 0;
 }
@@ -648,19 +634,19 @@ int bfree(int block_id){
 int name_i(char *fname){
 
 	// search an i-node with name <fname> in the first inode block
-	for (int i = 0; i < INODES_SIZE; i++){
-		if (!strcmp(firstInodes[i%INODES_SIZE].name, fname)){
-			//Return de inode id
-			return i;
+	for (int i = 0; i < MAX_FILE_NUM; i++){
+		if (inodes[i].type == INODE){
+			if (!strcmp(inodes[i].inode.name, fname)){
+				//Return de inode id
+				return i;
+			}
+		}else{ 
+			if (!strcmp(inodes[i].soft_link.link, fname)){
+				//Return de inode id
+				return i;
+			}
 		}
-	}
-	// search an i-node with name <fname> in the second inode block
-	for (int i = 0; i < INODES_SIZE; i++){
-		if (!strcmp(secondInodes[i%INODES_SIZE].name, fname)){
-			//Return de inode id
-			return i;
-		}
-	}
+	}	
 
 	//Return -1 if not found
 	return -1;
@@ -678,27 +664,15 @@ int b_map(int inode_id, int offset) {
 		return -1;
 	}
 	
-	if ( (inode_id/INODES_SIZE) == 0 ){
-		
-		int block = offset/BLOCK_SIZE; // Calculate the block of this offset
-		// Check if it's alredy initializated and it not
-		// make a balloc, finally return the block number
-		if (firstInodes[inode_id%INODES_SIZE].direct_block[block] == -1 ){
-			int block_id = balloc();
-			firstInodes[inode_id%INODES_SIZE].direct_block[block] = block_id;
-		}
-		return firstInodes[inode_id%INODES_SIZE].direct_block[block];
-	}else{
-
-		int block = offset/BLOCK_SIZE; // Calculate the block of this offset
-		// Check if it's alredy initializated and it not
-		// make a balloc, finally return the block number
-		if (secondInodes[inode_id%INODES_SIZE].direct_block[block] == -1 ){
-			int block_id = balloc();
-			secondInodes[inode_id%INODES_SIZE].direct_block[block] = block_id;
-		}
-		return secondInodes[inode_id%INODES_SIZE].direct_block[block];
+	int block = offset/BLOCK_SIZE; // Calculate the block of this offset
+	// Check if it's alredy initializated and it not
+	// make a balloc, finally return the block number
+	if (inodes[inode_id].inode.direct_block[block] == -1 ){
+		int block_id = balloc();
+		inodes[inode_id].inode.direct_block[block] = block_id;
 	}
+	return inodes[inode_id].inode.direct_block[block];
+	
 
 	return -1;
 }
@@ -717,11 +691,11 @@ int meta_readFromDisk(void){
 
 	// Read the frist 24 inodes from disk to memory
 	if (bread(DEVICE_IMAGE, firstInodes_Block, b) == -1){return -1;}
-	memcpy((char*)&firstInodes, b, BLOCK_SIZE);
+	memcpy((char*)&inodes[0], b, 24*sizeof(inode_t));
 
 	// Read the second 24 inodes from disk to memory
 	if (bread(DEVICE_IMAGE, secondInodes_Block, b) == -1){return -1;}
-	memcpy((char*)&secondInodes, b, BLOCK_SIZE);
+	memcpy((char*)&inodes[24], b, 24*sizeof(inode_t));
 
 	return 0;
 }
@@ -735,17 +709,17 @@ int meta_writeToDisk(void){
 	// write in disk the superblock
 	char buff[BLOCK_SIZE];
 	memset(buff, '\0', BLOCK_SIZE);
-	memcpy(buff, (char*) &superblock, sizeof(superblock));
+	memmove(buff, (char*) &superblock, sizeof(superblock));
 	if (bwrite(DEVICE_IMAGE, 0, buff) == -1) { return -1; }
 
 	// Write the first 24 inodes from memory to disk
 	memset(buff, '\0', BLOCK_SIZE);
-	memcpy(buff, (char*)&firstInodes, BLOCK_SIZE);
+	memmove(buff, (char*)&inodes[0], 24*sizeof(inode_t));
 	if (bwrite(DEVICE_IMAGE, firstInodes_Block, buff)){return -1;}
 
 	// Write the second 24 inodes from memory to disk
 	memset(buff, '\0', BLOCK_SIZE);
-	memcpy(buff, (char*)&secondInodes, BLOCK_SIZE);
+	memmove(buff, (char*)&inodes[24], 24*sizeof(inode_t));
 	if (bwrite(DEVICE_IMAGE, secondInodes_Block, buff)){return -1;}	
 
 	return 0;
