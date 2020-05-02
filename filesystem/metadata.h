@@ -35,13 +35,15 @@ typedef struct inode {
   char name[MAX_NAME_LENGHT];	             /* Filename */
   unsigned int size;	                     /* Current file size in bytes */
   unsigned int direct_block[5];            /* Number of the direct block */
-  char padding[80-56];          
+  uint32_t crc[5];
+  char padding[80-76];          
 } inode_t;
 
 /* File descriptor table only in memory */
 struct {
   int state;  /*open/close*/
   int offset; /* read/write position*/
+  int integrity; /* true if it's open with integrity, false if not */
 }inodes_x[MAX_FILE_NUM];
 
 /* Define states */
