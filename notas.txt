@@ -6,14 +6,6 @@
 
     - Por que en disk.dat aparecen cosas que no hemos escrito????
 
-    - openFile sobre un enlace????
-
-    - Que hacemos con inodes_x[] con los enlaces simbolicos, si hacemos read de un
-    enlace se actualza el puntero del source?
-
-    - no se puede crear un enlace con nombre de otra fichero no?
-
-
 -TODO:
     - Revision de los requisitos y del codigo
     - Memoria: Introducción 
@@ -35,4 +27,11 @@
             - Salida obtenida
             - Trazabilidad 
     - Memoria: conclusiones
+
+    - Integridad: 
+        - CRC inicialmente a 0, no se puede abrir con openIntegrity si esta todo a 0;
+        - Distinguir entre sin integridad o corruputo
+    
+    - Enlaces:
+        - Proyectar todas las operaciones sobre un enlace sobre su fichero correspondiente.
 

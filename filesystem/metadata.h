@@ -33,7 +33,7 @@ typedef struct superblock {
 
 /* Disk inode type */
 typedef struct{
-  int type;                                /* Type (inode or link) */
+  int type;                                    /* Type (inode or link) */
   union  {
     struct inode {
       char name[MAX_NAME_LENGHT];	             /* Filename */

@@ -130,7 +130,7 @@ int createFile(char *fileName) {
         return -2;
     }
 	// Check that the name size is legal
-	if (strlen(fileName) > MAX_NAME_LENGHT) {return -1;}
+	if (strlen(fileName) > MAX_NAME_LENGHT) {return -2;}
 	
 	// Set default settings for the new inode
 	inodes[inode_id].type = INODE;
@@ -138,11 +138,10 @@ int createFile(char *fileName) {
 	inodes[inode_id].inode.direct_block[0] = b_id;
 	for (int i = 1; i < sizeof(inodes[inode_id].inode.direct_block)/4; i++){
 		inodes[inode_id].inode.direct_block[i] = -1;
+		inodes[inode_id].inode.crc[i] = 0;
 	}
 	inodes[inode_id].inode.size = 0;
 
-    
-    
 	// Set the offset and state in file desctiptor
 	inodes_x[inode_id].offset    = 0;
     inodes_x[inode_id].state     = CLOSE;
@@ -168,8 +167,11 @@ int removeFile(char *fileName) {
 	if (inode_id == -1){
 		return -1;
 	}
+
+	// If it's a soft link return error
+	if (inodes[inode_id].type == LINK ) {return -2;}
+
 	// Free the direct block
-	
 	for (int i=0; i<5; i++){
 		int block = inodes[inode_id].inode.direct_block[i];
 		if (block != -1){
@@ -188,20 +190,22 @@ int removeFile(char *fileName) {
  */
 int openFile(char *fileName) {
 	// If filesystem isn't mounted return error
-	if (!isMounted){
-		return -2;
-	}
-
+	if (!isMounted){ return -2;}
 	int inode_id;
 	inode_id = name_i(fileName);
 	// Check if the fileName exist
-	if (inode_id == -1){
-		return -1;
-	}
+	if (inode_id == -1){ return -1; }
+	
 	// Check if it's currently opened
 	if (inodes_x[inode_id].state == OPEN) {
 		return -2;
 	}
+
+	if (inodes[inode_id].type == LINK){
+		int err = openFile(inodes[inode_id].soft_link.source);
+		if (err<0) {return -2;}
+	}
+
 	// Open the file, set offset to 0 and returns its
 	// file descriptor id
 	inodes_x[inode_id].state = OPEN;
@@ -217,17 +221,20 @@ int openFile(char *fileName) {
 int closeFile(int fileDescriptor){
 	
 	// If filesystem isn't mounted return error
-	if (!isMounted){
-		return -1;
-	}
+	if (!isMounted){ return -1;	}
 
 	if (inodes_x[fileDescriptor].integrity == TRUE) {return -1;}
 
 	// Check if it's currently closed
-	if (inodes_x[fileDescriptor].state == CLOSE){
-		return -1;
-	}
+	if (inodes_x[fileDescriptor].state == CLOSE){ return -1;}
 
+	if (inodes[fileDescriptor].type == LINK){
+		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		int err = closeFile(source_fd);
+		if ( err < 0 ) { return -1; }
+	}
+	
 	//Close the file and return 0
 	inodes_x[fileDescriptor].state = CLOSE;
 	return 0;
@@ -238,16 +245,15 @@ int closeFile(int fileDescriptor){
  * @return	Number of bytes properly read, -1 in case of error.
  */
 int readFile(int fileDescriptor, void *buffer, int numBytes) {
-	if (!isMounted) {printf("1");return -1; }
+	if (!isMounted) {return -1; }
 	// Check that the file is legal and exists
-	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) {printf("2"); return -1;}
-	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){printf("3"); return -1; }
+	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) { return -1;}
+	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){ return -1; }
 	// Check that numBytes has the right size
-	if (numBytes < 0) {printf("4"); return -1; }
-	if (numBytes == 0) {printf("5"); return 0;}
-	if (inodes_x[fileDescriptor].state == CLOSE) {return -1;}
+	if (numBytes < 0) { return -1; }
+	if (numBytes == 0) { return 0;}
+	if (inodes_x[fileDescriptor].state == CLOSE) { return -1;}
 	
-	printf ("El tipo es: %d", inodes[fileDescriptor].type);
 
 	if (inodes[fileDescriptor].type == LINK){
 		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
@@ -259,13 +265,10 @@ int readFile(int fileDescriptor, void *buffer, int numBytes) {
 	int blocks, readed = 0, toread = 0;
 	char b[BLOCK_SIZE];
 	memset(b, '\0', BLOCK_SIZE);
-
 	
 	size = inodes[fileDescriptor].inode.size;
-	if (size == position){return 0;}
+	if (size == position){ return 0;}
 	
-	
-
 	// If the bytes to read are greater than the available bytes
 	//  then read only the bytes available
 	if (numBytes > size - position){
@@ -273,7 +276,6 @@ int readFile(int fileDescriptor, void *buffer, int numBytes) {
 	}
 
 	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
-	
 	for (int i = 0; i < blocks; i++){
 		int block_id = b_map(fileDescriptor, position); // Get the number of block to read
 		if (block_id == -1){ return -1; }
@@ -301,6 +303,7 @@ int readFile(int fileDescriptor, void *buffer, int numBytes) {
  * @return	Number of bytes properly written, -1 in case of error.
  */
 int writeFile(int fileDescriptor, void *buffer, int numBytes){
+	printf("%p" , buffer);
 	if (!isMounted) {return -1;}
 	// Check that the file is legal and exists
 	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) {return -1;}
@@ -308,9 +311,8 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	// Check that numBytes has the right size
 	if (numBytes < 0) {return -1;}
 	if (numBytes == 0 || inodes_x[fileDescriptor].offset == MAX_FILE_SIZE) {return 0;}
-	if (inodes_x[fileDescriptor].state == CLOSE) {return -1;}
-
-
+	if (inodes_x[fileDescriptor].state == CLOSE) { return -1;}
+	
 	if (inodes[fileDescriptor].type == LINK){
 		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
 		if (source_fd < 0 ) {return -1;} 
@@ -323,7 +325,7 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	memset(b, '\0', BLOCK_SIZE);
 
 	
-	if (numBytes > MAX_FILE_SIZE - position){
+	if (numBytes > (MAX_FILE_SIZE - position)){
 		numBytes = MAX_FILE_SIZE - position;
 	}
 	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
@@ -331,13 +333,16 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 		// Case: first block
 		if (i == 0){
 			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
-			if (block_id == -1){return -1; }
+			if (block_id == -1){ return -1; }
 			int towrite = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to write
 			// Read the block, append the first 'towrite' bytes of buffer
 			// and then write it in disk
 			if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
-			memmove(b+(position%BLOCK_SIZE), buffer, towrite);
-			if (bwrite(DEVICE_IMAGE, firstDataBlock +block_id, b) == -1){return -1;};
+			printf("%d", towrite);
+			memmove(&b[position%BLOCK_SIZE], buffer, towrite);
+
+			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
+		
 			writed += towrite;
 			position += towrite;
 		}
@@ -379,6 +384,7 @@ int lseekFile(int fileDescriptor, long offset, int whence) {
 	if (!isMounted) {return -1;}
 	if ( fileDescriptor < 0 || fileDescriptor > MAX_FILE_NUM) {return -1;}
 	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0) {return -1;}
+	if (inodes_x[fileDescriptor].state == CLOSE ) {return -1;}
 
 
 	if (inodes[fileDescriptor].type == LINK){
@@ -422,10 +428,12 @@ int checkFile(char *fileName){
 
 	
 	int blocks[5];
+	int hasIntegrity = FALSE; 
 	memcpy(blocks,  inodes[inode_id].inode.direct_block, 5*sizeof(int));
 	for (int i = 0; i<sizeof(blocks)/sizeof(int); i++){
-		if (blocks[i] != -1){
-			if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b) == -1){return -2;}
+		if (blocks[i] != -1 && inodes[inode_id].inode.crc[i] != 0){
+			hasIntegrity = TRUE;
+			if(bread(DEVICE_IMAGE, firstDataBlock + blocks[i], b) == -1){ return -2; }
 			uint32_t expected = CRC32((const unsigned char*)b, BLOCK_SIZE);
 			uint32_t got = inodes[inode_id].inode.crc[i];
 			if (expected != got ){
@@ -433,6 +441,7 @@ int checkFile(char *fileName){
 			}
 		}
 	}
+	if (hasIntegrity==FALSE){ return -2; }
 	
 	return 0;
 }
