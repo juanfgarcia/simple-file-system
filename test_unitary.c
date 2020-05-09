@@ -366,12 +366,12 @@ int main() {
 	test_removeFile_dontExists();
 
 	test_writeFile();
-	// test_writeFile_bigWrite();
-	// test_writeFile_outOfLimits();
-	// test_writeFile_dontExist();
-	// test_writeFile_notOpened();
+	test_writeFile_bigWrite();
+	test_writeFile_outOfLimits();
+	test_writeFile_dontExist();
+	test_writeFile_notOpened();
 
-	// test_readFile();
+	test_readFile();
 
 	unmountFS();
 

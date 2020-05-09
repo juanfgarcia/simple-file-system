@@ -246,13 +246,13 @@ int closeFile(int fileDescriptor){
  */
 int readFile(int fileDescriptor, void *buffer, int numBytes) {
 	if (!isMounted) {return -1; }
+	if (inodes_x[fileDescriptor].state == CLOSE) {return -1;}
 	// Check that the file is legal and exists
 	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) { return -1;}
 	if (bitmap_getbit(superblock.inode_map, fileDescriptor) == 0){ return -1; }
 	// Check that numBytes has the right size
 	if (numBytes < 0) { return -1; }
 	if (numBytes == 0) { return 0;}
-	if (inodes_x[fileDescriptor].state == CLOSE) { return -1;}
 	
 
 	if (inodes[fileDescriptor].type == LINK){
@@ -275,25 +275,30 @@ int readFile(int fileDescriptor, void *buffer, int numBytes) {
 		numBytes = size - position;
 	}
 
+	
 	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
 	for (int i = 0; i < blocks; i++){
 		int block_id = b_map(fileDescriptor, position); // Get the number of block to read
 		if (block_id == -1){ return -1; }
-		
+		// If i it's not the last (first and middle) and there is more than one block
 		if ((i!=blocks-1 && (blocks>1))){
 			toread = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to read
-		}else{
+		}
+		// If it's the last block or the first of a single-block read
+		else{
 			toread = numBytes - readed; // Get the size to write
 		}
 		// Read the block, and append the bytes 'toread'
 		// to the buffer
 		if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){ return -1; };
-		memmove(buffer+readed, b+position%BLOCK_SIZE, toread);
+		memmove(buffer+readed, &b[position%BLOCK_SIZE], toread);
+		
 		readed += toread;
 		position += toread;
 	}	
 	// Update offset and size
 	inodes_x[fileDescriptor].offset += numBytes;
+
 
 	return numBytes;
 }
@@ -303,7 +308,6 @@ int readFile(int fileDescriptor, void *buffer, int numBytes) {
  * @return	Number of bytes properly written, -1 in case of error.
  */
 int writeFile(int fileDescriptor, void *buffer, int numBytes){
-	printf("%p" , buffer);
 	if (!isMounted) {return -1;}
 	// Check that the file is legal and exists
 	if (fileDescriptor > MAX_FILE_NUM || fileDescriptor < 0) {return -1;}
@@ -320,7 +324,7 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	}
 
 	int position = inodes_x[fileDescriptor].offset;
-	int blocks, writed = 0;
+	int blocks, writed = 0, towrite = 0;
 	char b[BLOCK_SIZE];
 	memset(b, '\0', BLOCK_SIZE);
 
@@ -330,44 +334,24 @@ int writeFile(int fileDescriptor, void *buffer, int numBytes){
 	}
 	blocks = ((position+numBytes)/BLOCK_SIZE) + 1; // Number of blocks where we are going to write
 	for (int i = 0; i < blocks; i++){
-		// Case: first block
-		if (i == 0){
-			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
-			if (block_id == -1){ return -1; }
-			int towrite = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to write
-			// Read the block, append the first 'towrite' bytes of buffer
-			// and then write it in disk
-			if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
-			printf("%d", towrite);
-			memmove(&b[position%BLOCK_SIZE], buffer, towrite);
+		int block_id = b_map(fileDescriptor, position); // Get the number of block to read
+		if (block_id == -1){ return -1; }
+		// If i it's not the last (first and middle) and there is more than one block
+		if ((i!=blocks-1 && (blocks>1))){
+			towrite = BLOCK_SIZE - position%BLOCK_SIZE; // Get the size to read
+		}
+		// If it's the last block or the first of a single-block read
+		else{
+			towrite = numBytes - writed; // Get the size to write
+		}
 
-			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
+		if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
+		memmove(&b[position%BLOCK_SIZE], buffer+writed, towrite);
+		if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1){return -1;};
 		
-			writed += towrite;
-			position += towrite;
-		}
-		// Case: last block
-		else if (i==blocks-1){
-			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
-			if (block_id == -1){return -1; }
-			int towrite = numBytes - writed; // Get the size to write
-			// Read the block append it at the begining the 
-			// last 'towrite' bytes of buffer and write it on disk
-			if (bread(DEVICE_IMAGE, firstDataBlock + block_id, b) == 1) { return -1;};
-			memmove(b, buffer+writed, towrite);
-			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1) {return -1;}
-			writed += towrite;
-			position += towrite;				
-		}
-		// Case: middle block
-		else {
-			int block_id = b_map(fileDescriptor, position); // Get the number of block to write
-			if (block_id == -1){ return -1; }
-			memmove(b, buffer+writed, BLOCK_SIZE);
-			if (bwrite(DEVICE_IMAGE, firstDataBlock + block_id, b) == -1) {return -1;}
-			writed += BLOCK_SIZE;
-			position += BLOCK_SIZE;
-		}
+		writed += towrite;
+		position += towrite;
+
 	}
 	// Update offset and size
 	inodes_x[fileDescriptor].offset += numBytes;
@@ -504,15 +488,24 @@ int openFileIntegrity(char *fileName){
 int closeFileIntegrity(int fileDescriptor) {
 	int err;
 	if (!isMounted){return -3;} //Error
-
 	if (inodes_x[fileDescriptor].integrity == FALSE) {return -1;}
 	
 	err = includeIntegrity(inodes[fileDescriptor].inode.name);
 	if (err < 0) {return -1;} 	 // Error 
 	
-	err = closeFile(fileDescriptor);
-	if (err==-1) {return -1;}
-	return err;
+	// Check if it's currently closed
+	if (inodes_x[fileDescriptor].state == CLOSE){ return -1;}
+
+	if (inodes[fileDescriptor].type == LINK){
+		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
+		if (source_fd < 0 ) {return -1;} 
+		int err = closeFile(source_fd);
+		if ( err < 0 ) { return -1; }
+	}
+	
+	//Close the file and return 0
+	inodes_x[fileDescriptor].state = CLOSE;
+	return 0;
 }
 
 /*
