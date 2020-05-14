@@ -203,7 +203,7 @@ int openFile(char *fileName) {
 
 	if (inodes[inode_id].type == LINK){
 		int err = openFile(inodes[inode_id].soft_link.source);
-		if (err<0) {return -2;}
+		if (err==-1) {return -2;}
 	}
 
 	// Open the file, set offset to 0 and returns its
@@ -231,8 +231,7 @@ int closeFile(int fileDescriptor){
 	if (inodes[fileDescriptor].type == LINK){
 		int source_fd = name_i(inodes[fileDescriptor].soft_link.source);
 		if (source_fd < 0 ) {return -1;} 
-		int err = closeFile(source_fd);
-		if ( err < 0 ) { return -1; }
+		closeFile(source_fd);
 	}
 	
 	//Close the file and return 0
@@ -487,7 +486,7 @@ int openFileIntegrity(char *fileName){
  */
 int closeFileIntegrity(int fileDescriptor) {
 	int err;
-	if (!isMounted){return -3;} //Error
+	if (!isMounted){return -1;} //Error
 	if (inodes_x[fileDescriptor].integrity == FALSE) {return -1;}
 	
 	err = includeIntegrity(inodes[fileDescriptor].inode.name);
